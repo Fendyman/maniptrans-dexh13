@@ -982,6 +982,16 @@ class DexHandManipBiHEnv(VecTask):
             **{"rh_" + k: v for k, v in rh_reward_dict.items()},
             **{"lh_" + k: v for k, v in lh_reward_dict.items()},
         }
+        
+        # Accumulate episode-level object errors for evaluation metrics (average of rh and lh)
+        rh_obj_pos_err = rh_reward_dict.get("obj_pos_err", None)
+        lh_obj_pos_err = lh_reward_dict.get("obj_pos_err", None)
+        if rh_obj_pos_err is not None and lh_obj_pos_err is not None:
+            avg_obj_pos_err = (rh_obj_pos_err + lh_obj_pos_err) / 2
+            avg_obj_rot_err = (rh_reward_dict["obj_rot_err"] + lh_reward_dict["obj_rot_err"]) / 2
+            self.episode_obj_pos_err_sum += avg_obj_pos_err
+            self.episode_obj_rot_err_sum += avg_obj_rot_err
+            self.episode_step_count += 1
 
     def compute_reward_side(self, actions, side="rh"):
         side_demo_data = self.demo_data_rh if side == "rh" else self.demo_data_lh
@@ -1383,6 +1393,10 @@ class DexHandManipBiHEnv(VecTask):
         self.failure_buf[env_ids] = 0
         self.error_buf[env_ids] = 0
         self.total_rew_buf[env_ids] = 0
+        # Reset episode-level error accumulators
+        self.episode_obj_pos_err_sum[env_ids] = 0
+        self.episode_obj_rot_err_sum[env_ids] = 0
+        self.episode_step_count[env_ids] = 0
         self.apply_forces[env_ids] = 0
         self.apply_torque[env_ids] = 0
         self.curr_targets[env_ids] = 0
@@ -1491,6 +1505,14 @@ class DexHandManipBiHEnv(VecTask):
         info["reward_dict"] = self.reward_dict
         info["total_rewards"] = self.total_rew_buf
         info["total_steps"] = self.progress_buf
+        # Add evaluation metrics for testing (Table 1 in paper)
+        info["success_buf"] = self.success_buf
+        info["failure_buf"] = self.failure_buf
+        # Return episode-average object errors (more stable than instantaneous errors)
+        # Avoid division by zero
+        safe_step_count = torch.clamp(self.episode_step_count, min=1)
+        info["obj_pos_err"] = self.episode_obj_pos_err_sum / safe_step_count
+        info["obj_rot_err"] = self.episode_obj_rot_err_sum / safe_step_count
         return obs, rew, done, info
 
     def pre_physics_step(self, actions):
@@ -2023,6 +2045,9 @@ def compute_imitation_reward(
         "reward_power": reward_power,
         "reward_wrist_power": reward_wrist_power,
         "reward_finger_tip_force": reward_finger_tip_force,
+        # Evaluation metrics for Table 1
+        "obj_pos_err": diff_obj_pos_dist,  # Object position error in meters
+        "obj_rot_err": diff_obj_rot_angle.abs() / np.pi * 180,  # Object rotation error in degrees
     }
 
     return reward_execute, reset_buf, succeeded, failed_execute, reward_dict, error_buf

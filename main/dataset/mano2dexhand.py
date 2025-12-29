@@ -161,7 +161,8 @@ class Mano2Dexhand:
         self.dexhand_default_dof_pos = default_dof_state
         self.dexhand_default_pose = gymapi.Transform()
         self.dexhand_default_pose.p = gymapi.Vec3(0, 0, 0)
-        self.dexhand_default_pose.r = gymapi.Quat(0, 0, 0, 1)
+        # Rotate 90 degrees around z-axis: quat = (0, 0, sin(pi/4), cos(pi/4))
+        self.dexhand_default_pose.r = gymapi.Quat(0, 0, 0.7071067811865476, 0.7071067811865476)
 
         table_width_offset = 0.2
         mujoco2gym_transf = np.eye(4)
@@ -218,7 +219,10 @@ class Mano2Dexhand:
             # Set DOF control properties
             self.gym.set_actor_dof_properties(env, dexhand_actor, dexhand_dof_props)
 
-            self.obj_actor = self.gym.create_actor(env, current_asset, gymapi.Transform(), "manip_obj", i, 0)
+            # Use collision filter to optionally disable hand-object collision
+            # Filter 0b10 (2) will not collide with hand's filter 0 or 1
+            obj_collision_filter = 0b10 if getattr(args, 'disable_collision', False) else 0
+            self.obj_actor = self.gym.create_actor(env, current_asset, gymapi.Transform(), "manip_obj", i, obj_collision_filter)
 
             scene_asset_options = gymapi.AssetOptions()
             scene_asset_options.fix_base_link = True
@@ -330,8 +334,11 @@ class Mano2Dexhand:
             dtype=torch.float32,
             requires_grad=True,
         )
+        # Apply y-axis 90 degree rotation to initial wrist orientation
+        y_rot_90 = aa_to_rotmat(torch.tensor([0, np.pi / 2, 0], device=self.sim_device, dtype=torch.float32))
+        initial_wrist_rot = target_wrist_rot @ y_rot_90
         opt_wrist_rot = torch.tensor(
-            rotmat_to_rot6d(target_wrist_rot), device=self.sim_device, dtype=torch.float32, requires_grad=True
+            rotmat_to_rot6d(initial_wrist_rot), device=self.sim_device, dtype=torch.float32, requires_grad=True
         )
         opt_dof_pos = torch.tensor(
             self.dexhand_default_dof_pos["pos"][None].repeat(self.num_envs, axis=0),
@@ -465,6 +472,12 @@ if __name__ == "__main__":
                 "name": "--side",
                 "type": str,
                 "default": "right",
+            },
+            {
+                "name": "--disable_collision",
+                "action": "store_true",
+                "default": False,
+                "help": "Disable collision between hand and object during retargeting",
             },
         ],
     )

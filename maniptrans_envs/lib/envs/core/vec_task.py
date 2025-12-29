@@ -421,6 +421,12 @@ class VecTask(Env):
         self.success_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
         self.failure_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
         self.error_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+        # Evaluation metrics buffers for tracking episode-level errors (Table 1 in ManipTrans paper)
+        self.episode_obj_pos_err_sum = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)  # E_t
+        self.episode_obj_rot_err_sum = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)  # E_r
+        self.episode_joint_err_sum = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)    # E_j
+        self.episode_fingertip_err_sum = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)  # E_ft
+        self.episode_step_count = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
         self.extras = {}
         self.reward_dict = {}
 

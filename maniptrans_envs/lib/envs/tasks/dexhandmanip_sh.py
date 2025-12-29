@@ -869,6 +869,14 @@ class DexHandManipRHEnv(VecTask):
             self.dexhand.weight_idx,
         )
         self.total_rew_buf += self.rew_buf
+        
+        # Accumulate episode-level object errors for evaluation metrics
+        if "E_t" in self.reward_dict:
+            self.episode_obj_pos_err_sum += self.reward_dict["E_t"]
+            self.episode_obj_rot_err_sum += self.reward_dict["E_r"]
+            self.episode_joint_err_sum += self.reward_dict["E_j"]
+            self.episode_fingertip_err_sum += self.reward_dict["E_ft"]
+            self.episode_step_count += 1
 
     def compute_observations(self):
         self._refresh()
@@ -1149,6 +1157,12 @@ class DexHandManipRHEnv(VecTask):
         self.failure_buf[env_ids] = 0
         self.error_buf[env_ids] = 0
         self.total_rew_buf[env_ids] = 0
+        # Reset episode-level error accumulators (Table 1 metrics)
+        self.episode_obj_pos_err_sum[env_ids] = 0  # E_t
+        self.episode_obj_rot_err_sum[env_ids] = 0  # E_r
+        self.episode_joint_err_sum[env_ids] = 0    # E_j
+        self.episode_fingertip_err_sum[env_ids] = 0  # E_ft
+        self.episode_step_count[env_ids] = 0
         self.apply_forces[env_ids] = 0
         self.apply_torque[env_ids] = 0
         self.curr_targets[env_ids] = 0
@@ -1198,6 +1212,17 @@ class DexHandManipRHEnv(VecTask):
         info["reward_dict"] = self.reward_dict
         info["total_rewards"] = self.total_rew_buf
         info["total_steps"] = self.progress_buf
+        # Add evaluation metrics for testing (Table 1 in ManipTrans paper)
+        info["success_buf"] = self.success_buf
+        info["failure_buf"] = self.failure_buf
+        # Return episode-average errors (more stable than instantaneous errors)
+        # Avoid division by zero
+        safe_step_count = torch.clamp(self.episode_step_count, min=1)
+        # Table 1 metrics: E_r (rotation), E_t (translation), E_j (joint), E_ft (fingertip), SR (success rate)
+        info["E_r"] = self.episode_obj_rot_err_sum / safe_step_count  # degrees
+        info["E_t"] = self.episode_obj_pos_err_sum / safe_step_count  # meters
+        info["E_j"] = self.episode_joint_err_sum / safe_step_count    # meters
+        info["E_ft"] = self.episode_fingertip_err_sum / safe_step_count  # meters
         return obs, rew, done, info
 
     def pre_physics_step(self, actions):
@@ -1592,6 +1617,18 @@ def compute_imitation_reward(
         "reward_power": reward_power,
         "reward_wrist_power": reward_wrist_power,
         "reward_finger_tip_force": reward_finger_tip_force,
+        # Evaluation metrics for Table 1 (ManipTrans paper)
+        # E_r: object rotation error (degrees)
+        "E_r": diff_obj_rot_angle.abs() / np.pi * 180,
+        # E_t: object translation/position error (meters)
+        "E_t": diff_obj_pos_dist,
+        # E_j: joint position error (meters) - average of all joints
+        "E_j": diff_joints_pos_dist.mean(dim=-1),
+        # E_ft: fingertip position error (meters) - average of 5 fingertips
+        "E_ft": (diff_thumb_tip_pos_dist + diff_index_tip_pos_dist + diff_middle_tip_pos_dist + diff_ring_tip_pos_dist + diff_pinky_tip_pos_dist) / 5,
+        # Legacy names for backward compatibility
+        "obj_pos_err": diff_obj_pos_dist,
+        "obj_rot_err": diff_obj_rot_angle.abs() / np.pi * 180,
     }
 
     return reward_execute, reset_buf, succeeded, failed_execute, reward_dict, error_buf

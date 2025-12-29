@@ -400,6 +400,15 @@ class MyBasePlayer(object):
         cr = torch.zeros(batch_size, dtype=torch.float32)
         steps = torch.zeros(batch_size, dtype=torch.float32)
 
+        # Evaluation metrics tracking (Table 1 in ManipTrans paper)
+        # E_r↓: rotation error (deg), E_t↓: translation error (cm), E_j↓: joint error (cm), E_ft↓: fingertip error (cm), SR↑: success rate
+        total_episodes = 0
+        total_success = 0
+        total_E_r = 0.0  # rotation error (degrees)
+        total_E_t = 0.0  # translation error (meters)
+        total_E_j = 0.0  # joint error (meters)
+        total_E_ft = 0.0  # fingertip error (meters)
+
         done = None
 
         while True:
@@ -507,10 +516,48 @@ class MyBasePlayer(object):
                 sum_rewards += cur_rewards
                 sum_steps += cur_steps
 
+                # Collect evaluation metrics (Table 1 in ManipTrans paper)
+                if "success_buf" in info and info["success_buf"] is not None:
+                    success_buf = info["success_buf"]
+                    
+                    # Count successes for done episodes
+                    done_success = success_buf[done_indices].sum().item()
+                    total_episodes += done_count
+                    total_success += done_success
+                    
+                    # Accumulate errors for done episodes (Table 1 metrics)
+                    E_r = info.get("E_r", None)
+                    E_t = info.get("E_t", None)
+                    E_j = info.get("E_j", None)
+                    E_ft = info.get("E_ft", None)
+                    
+                    if E_r is not None:
+                        total_E_r += E_r[done_indices].sum().item()
+                    if E_t is not None:
+                        total_E_t += E_t[done_indices].sum().item()
+                    if E_j is not None:
+                        total_E_j += E_j[done_indices].sum().item()
+                    if E_ft is not None:
+                        total_E_ft += E_ft[done_indices].sum().item()
+
                 if self.print_stats:
                     cur_rewards_done = cur_rewards / done_count
                     cur_steps_done = cur_steps / done_count
-                    print(f"reward: {cur_rewards_done:.2f} steps: {cur_steps_done:.1f}")
+                    
+                    # Calculate and print all 5 evaluation metrics (Table 1 in ManipTrans paper)
+                    # E_r↓: rotation error (deg), E_t↓: translation error (cm), E_j↓: joint error (cm), E_ft↓: fingertip error (cm), SR↑: success rate
+                    if total_episodes > 0:
+                        sr = total_success / total_episodes * 100  # Success Rate (%)
+                        avg_E_r = total_E_r / total_episodes  # degrees
+                        avg_E_t = total_E_t / total_episodes * 100  # cm (convert from m)
+                        avg_E_j = total_E_j / total_episodes * 100  # cm (convert from m)
+                        avg_E_ft = total_E_ft / total_episodes * 100  # cm (convert from m)
+                        
+                        print(f"reward: {cur_rewards_done:.2f} steps: {cur_steps_done:.1f} | "
+                              f"Episodes: {total_episodes} "
+                              f"E_r↓: {avg_E_r:.2f}° E_t↓: {avg_E_t:.2f}cm E_j↓: {avg_E_j:.2f}cm E_ft↓: {avg_E_ft:.2f}cm SR↑: {sr:.1f}%")
+                    else:
+                        print(f"reward: {cur_rewards_done:.2f} steps: {cur_steps_done:.1f}")
 
     def get_batch_size(self, obses, batch_size):
         obs_shape = self.obs_shape
